@@ -2,6 +2,8 @@ import logging
 import os
 import time
 import asyncio
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
@@ -18,10 +20,22 @@ bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 user_clients = {}
 user_states = {}
 
+# ડમી વેબ સર્વર (Render ને ચાલુ રાખવા માટે)
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Neno Cloner Bot is Running Successfully!")
+
+def keep_alive():
+    port = int(os.environ.get('PORT', 10000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
 # પ્રોગ્રેસ બાર બતાવવા માટેનું ફંક્શન
 async def progress_callback(current, total, msg, action, start_time, last_update_time):
     now = time.time()
-    # ટેલિગ્રામમાં એરર ન આવે એટલે દર 3 સેકન્ડે મેસેજ અપડેટ થશે
     if now - last_update_time[0] > 3 or current == total:
         last_update_time[0] = now
         percent = current * 100 / total if total else 0
@@ -67,7 +81,6 @@ async def message_handler(event):
     state = user_states.get(chat_id, {})
     step = state.get('step')
     
-    # સ્ટેપ 1: મોબાઈલ નંબર લેવો
     if step == 'phone':
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
@@ -79,20 +92,17 @@ async def message_handler(event):
                 'phone': text,
                 'phone_code_hash': send_code_result.phone_code_hash
             }
-            # નવો Warning વાળો મેસેજ
             await event.respond("✅ An OTP has been sent to your Telegram account.\n\n⚠️ **IMPORTANT**: Please type the OTP with spaces between each number (e.g., type 1 2 3 4 5 instead of 12345). If you send it without spaces, Telegram will expire the code!")
         except Exception as e:
             await event.respond(f"❌ Invalid number or error occurred: {e}\nPlease send /start again.")
             await client.disconnect()
             user_states.pop(chat_id, None)
             
-    # સ્ટેપ 2: OTP લેવો
     elif step == 'otp':
         client = state['client']
         phone = state['phone']
         phone_code_hash = state['phone_code_hash']
         
-        # OTP માંથી સ્પેસ કાઢવાનો નવો કોડ
         clean_otp = text.replace(" ", "")
         
         try:
@@ -108,7 +118,6 @@ async def message_handler(event):
             await client.disconnect()
             user_states.pop(chat_id, None)
             
-    # સ્ટેપ 3: પાસવર્ડ (જો 2FA હોય તો)
     elif step == 'password':
         client = state['client']
         try:
@@ -121,7 +130,6 @@ async def message_handler(event):
             await client.disconnect()
             user_states.pop(chat_id, None)
             
-    # લિંક પરથી ફાઈલ ડાઉનલોડ કરવી
     elif text.startswith('https://t.me/c/'):
         if chat_id not in user_clients:
             await event.respond("⚠️ Please send /start to log in with your number and OTP first.")
@@ -142,7 +150,6 @@ async def message_handler(event):
                 start_time = time.time()
                 last_update_time = [0]
                 
-                # ફાઈલ ડાઉનલોડ
                 file_path = await user_client.download_media(
                     message, 
                     progress_callback=lambda c, t: progress_callback(c, t, msg, "📥 Downloading to Bot Server...", start_time, last_update_time)
@@ -153,7 +160,6 @@ async def message_handler(event):
                 start_time = time.time()
                 last_update_time = [0]
                 
-                # ફાઈલ અપલોડ
                 await bot.send_file(
                     chat_id, 
                     file_path, 
@@ -168,6 +174,8 @@ async def message_handler(event):
         except Exception as e:
             await msg.edit(f"⚠️ Invalid link or error fetching file: {e}")
 
-print("✅ Multi-User Neno Cloner Bot (English + Progress Bar + OTP Space Fix) શરૂ થઈ ગયું છે...")
-bot.run_until_disconnected()
+# ડમી સર્વર ચાલુ કરો
+keep_alive()
 
+print("✅ Multi-User Neno Cloner Bot (With Web Server) શરૂ થઈ ગયું છે...")
+bot.run_until_disconnected()
