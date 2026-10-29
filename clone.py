@@ -12,6 +12,7 @@ from telethon.errors import SessionPasswordNeededError
 API_ID = 37454672
 API_HASH = '795fbda39b1dd4a2437cadbeac320fe2'
 BOT_TOKEN = '9045745675:AAHTzksONddK7uYMcVpKIEHWM1nTSF-_V2s'
+
 logging.basicConfig(level=logging.INFO)
 
 bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
@@ -80,6 +81,7 @@ async def message_handler(event):
     state = user_states.get(chat_id, {})
     step = state.get('step')
     
+    # સ્ટેપ 1: મોબાઈલ નંબર લેવો
     if step == 'phone':
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
@@ -97,6 +99,7 @@ async def message_handler(event):
             await client.disconnect()
             user_states.pop(chat_id, None)
             
+    # સ્ટેપ 2: OTP લેવો
     elif step == 'otp':
         client = state['client']
         phone = state['phone']
@@ -117,6 +120,7 @@ async def message_handler(event):
             await client.disconnect()
             user_states.pop(chat_id, None)
             
+    # સ્ટેપ 3: પાસવર્ડ (જો 2FA હોય તો)
     elif step == 'password':
         client = state['client']
         try:
@@ -129,52 +133,91 @@ async def message_handler(event):
             await client.disconnect()
             user_states.pop(chat_id, None)
             
+    # લિંક પરથી ફાઈલ ડાઉનલોડ કરવી (સિંગલ અને બલ્ક બંને માટે)
     elif text.startswith('https://t.me/c/'):
         if chat_id not in user_clients:
             await event.respond("⚠️ Please send /start to log in with your number and OTP first.")
             return
             
-        msg = await event.respond("⏳ Initializing download...")
+        msg = await event.respond("⏳ Analyzing link...")
         user_client = user_clients[chat_id]
         
         try:
             parts = text.split('/')
             channel_id = int(parts[-2])
-            msg_id = int(parts[-1])
-            
+            msg_part = parts[-1]
             formatted_channel_id = int(f"-100{channel_id}")
-            message = await user_client.get_messages(formatted_channel_id, ids=msg_id)
             
-            if message and message.media:
-                start_time = time.time()
-                last_update_time = [0]
+            # જો લિંકમાં '198-228' જેવી રેન્જ હોય
+            if '-' in msg_part:
+                start_msg, end_msg = map(int, msg_part.split('-'))
+                await msg.edit(f"⏳ Found bulk link! Fetching messages from {start_msg} to {end_msg}...")
                 
-                file_path = await user_client.download_media(
-                    message, 
-                    progress_callback=lambda c, t: progress_callback(c, t, msg, "📥 Downloading to Bot Server...", start_time, last_update_time)
-                )
+                # લાઈનમાં બધી ફાઈલો ખેંચવા લૂપ ચલાવો
+                for m_id in range(start_msg, end_msg + 1):
+                    try:
+                        message = await user_client.get_messages(formatted_channel_id, ids=m_id)
+                        if message and message.media:
+                            start_time = time.time()
+                            last_update_time = [0]
+                            status_msg = await event.respond(f"⏳ Downloading message {m_id}...")
+                            
+                            file_path = await user_client.download_media(
+                                message, 
+                                progress_callback=lambda c, t: progress_callback(c, t, status_msg, f"📥 Downloading {m_id}...", start_time, last_update_time)
+                            )
+                            
+                            await status_msg.edit(f"✅ Download {m_id} complete! Uploading...")
+                            start_time = time.time()
+                            last_update_time = [0]
+                            
+                            await bot.send_file(
+                                chat_id, 
+                                file_path, 
+                                caption=message.text or "Cloned by Neno Cloner Bot",
+                                progress_callback=lambda c, t: progress_callback(c, t, status_msg, f"📤 Uploading {m_id}...", start_time, last_update_time)
+                            )
+                            os.remove(file_path)
+                            await status_msg.delete()
+                    except Exception as e:
+                        await event.respond(f"⚠️ Error with message {m_id}: {e}")
                 
-                await msg.edit("✅ Download complete! Starting upload...")
-                
-                start_time = time.time()
-                last_update_time = [0]
-                
-                await bot.send_file(
-                    chat_id, 
-                    file_path, 
-                    caption=message.text or "Cloned by Neno Cloner Bot",
-                    progress_callback=lambda c, t: progress_callback(c, t, msg, "📤 Uploading to Chat...", start_time, last_update_time)
-                )
-                
-                os.remove(file_path)
-                await msg.delete()
+                await msg.edit("✅ Bulk Cloning Complete!")
+            
+            # જો સિંગલ મેસેજની લિંક હોય
             else:
-                await msg.edit("❌ No file/media found in this link or message not found.")
+                msg_id = int(msg_part)
+                message = await user_client.get_messages(formatted_channel_id, ids=msg_id)
+                
+                if message and message.media:
+                    start_time = time.time()
+                    last_update_time = [0]
+                    
+                    file_path = await user_client.download_media(
+                        message, 
+                        progress_callback=lambda c, t: progress_callback(c, t, msg, "📥 Downloading to Bot Server...", start_time, last_update_time)
+                    )
+                    
+                    await msg.edit("✅ Download complete! Starting upload...")
+                    start_time = time.time()
+                    last_update_time = [0]
+                    
+                    await bot.send_file(
+                        chat_id, 
+                        file_path, 
+                        caption=message.text or "Cloned by Neno Cloner Bot",
+                        progress_callback=lambda c, t: progress_callback(c, t, msg, "📤 Uploading to Chat...", start_time, last_update_time)
+                    )
+                    os.remove(file_path)
+                    await msg.delete()
+                else:
+                    await msg.edit("❌ No file/media found in this link or message not found.")
+                    
         except Exception as e:
             await msg.edit(f"⚠️ Invalid link or error fetching file: {e}")
 
 # ડમી સર્વર ચાલુ કરો
 keep_alive()
 
-print("✅ Multi-User Neno Cloner Bot (With Web Server) શરૂ થઈ ગયું છે...")
+print("✅ Multi-User Neno Cloner Bot (With Web Server & Bulk Clone) શરૂ થઈ ગયું છે...")
 bot.run_until_disconnected()
