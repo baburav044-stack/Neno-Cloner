@@ -12,7 +12,6 @@ from telethon.errors import SessionPasswordNeededError
 API_ID = 37454672
 API_HASH = '795fbda39b1dd4a2437cadbeac320fe2'
 BOT_TOKEN = '9045745675:AAHTzksONddK7uYMcVpKIEHWM1nTSF-_V2s'
-
 logging.basicConfig(level=logging.INFO)
 
 bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
